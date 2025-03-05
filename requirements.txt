@@ -1,0 +1,7 @@
+transformers
+torch
+pyyaml
+pylint
+black
+pytest
+flask
