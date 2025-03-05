@@ -1,13 +1,16 @@
+import logging
 import argparse
 import json
 import sys
-import logging
+import os
+import sys
 from pathlib import Path
+from ai_debugger.config import Config
 from ai_debugger.syntax_checker import SyntaxChecker
 from ai_debugger.runtime_err_checker import detect_runtime_error
 from ai_debugger.utils import format_code, analyze_complexity
 from ai_debugger.static_analyzer import StaticAnalyzer
-from ai_debugger.debugger import analyze_file, analyze_changes
+from ai_debugger.debugger import Debugger
 from ai_debugger.llm_analyzer import analyze_code_with_llm
 from ai_debugger.pylint_analyzer import analyze_code_with_pylint
 
@@ -48,15 +51,26 @@ def main():
 
     parser.add_argument("--log", type=str, choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         help="Set the logging level")
+    parser.add_argument("--log-file", type=str,
+                        help="Path to the log file (e.g., ai_debugger.log)")
 
     args = parser.parse_args()
 
+    config = Config()
     if args.log:
-        logging.basicConfig(level=getattr(logging, args.log),
-                            format='%(asctime)s - %(levelname)s - %(message)s')
+        config.set("logging.level", args.log)
+    if hasattr(args, 'log_file') and args.log_file:
+        log_file_path = str(os.path.join(os.path.dirname(os.path.abspath(__file__)), args.log_file))
+        config.set("logging.file", log_file_path)
+
+    config._setup_logging()
+
+    logging.debug("CLI started with arguments: %s", vars(args))
+
+    if args.command in ['analyze', 'llm'] and hasattr(args, 'model'):
+        debugger = Debugger(llm_model=args.model, max_length=args.max_length)
     else:
-        logging.basicConfig(level=logging.INFO,
-                            format='%(asctime)s - %(levelname)s - %(message)s')
+        debugger = Debugger()
 
     if args.command == 'check':
         if args.format:
@@ -104,8 +118,10 @@ def main():
             sys.exit(1)
 
         print(f"Analyzing {file_path}...")
-        result = analyze_file(file_path, should_generate_report=args.report, llm_model=args.model,
-                              max_length=args.max_length)
+        result = debugger.analyze_file(
+            file_path=file_path,
+            should_generate_report=args.report
+        )
 
         if args.json:
             print(json.dumps(result, indent=2))
@@ -149,7 +165,7 @@ def main():
             sys.exit(1)
 
         print(f"Analyzing changes between {old_file} and {new_file}...")
-        changes = analyze_changes(old_file, new_file)
+        changes = debugger.analyze_changes(old_file, new_file)
 
         if args.json:
             print(json.dumps(changes, indent=2))

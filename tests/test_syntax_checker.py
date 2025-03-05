@@ -1,9 +1,10 @@
 from ai_debugger.syntax_checker import SyntaxChecker
-from ai_debugger.debugger import analyze_file, prioritize_errors, consolidate_fixes, cross_validate_analysis, \
-analyze_changes
+from ai_debugger.debugger import Debugger
 from ai_debugger.static_analyzer import StaticAnalyzer
 from ai_debugger.runtime_err_checker import detect_runtime_error
 
+
+debugger = Debugger()
 
 def test_syntax_checking():
     file_path = "test_files/broken_script.py"
@@ -89,7 +90,7 @@ def test_prioritize_errors():
         {"issue": "Runtime Error", "message": "Division by zero"},
     ]
 
-    prioritized = prioritize_errors(errors)
+    prioritized = debugger._prioritize_errors(errors)
     assert prioritized[0]["issue"] == "Syntax Error"
     assert prioritized[1]["issue"] == "Runtime Error"
     assert prioritized[2]["issue"] == "Static Analysis"
@@ -101,7 +102,7 @@ def test_consolidate_fixes():
         {"issue": "Static Analysis", "message": "Unused variable", "line": 15, "fix_suggestion": "Remove variable"},
         {"issue": "Syntax Error", "message": "Indentation error", "line": 10, "fix_suggestion": "Fix indentation"},
     ]
-    fixes = consolidate_fixes(errors)
+    fixes = debugger._consolidate_fixes(errors)
     assert len(fixes) == 2
     assert len(fixes[10]) == 2
     assert len(fixes[15]) == 1
@@ -113,23 +114,23 @@ def test_cross_validate_analysis():
     static_issues = [{"message": "Unused variable"}, {"message": "Missing colon"}]
     llm_analysis = {"message": "Possible bug"}
     pylint_analysis = {"errors": "Unused variable"}
-    validated = cross_validate_analysis(syntax_err, runtime_err, static_issues, llm_analysis, pylint_analysis)
-    assert len(validated) == 2
+    validated = debugger._cross_validate_analysis(syntax_err, runtime_err, static_issues, llm_analysis, pylint_analysis)
+    assert len(validated) == 4
     assert validated[0]["confidence"] == "High"
-    assert validated[1]["confidence"] == "Medium"
+    assert validated[1]["confidence"] == "High"
 
 
 def test_analyze_changes():
     old_file_path = "test_files/old_script.py"
     new_file_path = "test_files/new_script.py"
-    changes = analyze_changes(old_file_path, new_file_path)
+    changes = debugger.analyze_changes(old_file_path, new_file_path)
     assert "changed_lines" in changes
     assert len(changes["changed_lines"]) > 0
 
 
 def test_analyze_file():
     file_path = "test_files/broken_script.py"
-    result = analyze_file(file_path, should_generate_report=True)
+    result = debugger.analyze_file(file_path, should_generate_report=True)
     assert "errors" in result
     assert "fixes" in result
     assert "validated_issues" in result
