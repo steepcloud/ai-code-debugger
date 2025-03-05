@@ -1,6 +1,6 @@
-import pytest
 from ai_debugger.syntax_checker import SyntaxChecker
-from ai_debugger.debugger import analyze_file
+from ai_debugger.debugger import analyze_file, prioritize_errors, consolidate_fixes, cross_validate_analysis, \
+analyze_changes
 from ai_debugger.static_analyzer import StaticAnalyzer
 from ai_debugger.runtime_err_checker import detect_runtime_error
 
@@ -40,7 +40,7 @@ def test_runtime_error_detection():
 
 
 def test_no_errors():
-    file_path = "tests/test_files/valid_script.py"
+    file_path = "test_files/valid_script.py"
 
     try:
         with open(file_path, 'r') as file:
@@ -56,7 +56,7 @@ def test_no_errors():
 
 
 def test_no_runtime_errors():
-    file_path = "tests/test_files/valid_script.py"
+    file_path = "test_files/valid_script.py"
 
     try:
         with open(file_path, 'r') as file:
@@ -69,14 +69,68 @@ def test_no_runtime_errors():
 
 def test_static_analysis():
     code = """
-    def empty_function():
-        pass
-    
-    class EmptyClass:
-        pass
+def empty_function():
+    pass
+
+class EmptyClass:
+    pass
     """
 
     issues = StaticAnalyzer.analyze_code(code)
     assert len(issues) > 0
     assert issues[0]['issue'] == 'Empty Function'
     assert issues[1]['issue'] == 'Empty Class'
+
+
+def test_prioritize_errors():
+    errors = [
+        {"issue": "Static Analysis", "message": "Unused variable"},
+        {"issue": "Syntax Error", "message": "Missing colon"},
+        {"issue": "Runtime Error", "message": "Division by zero"},
+    ]
+
+    prioritized = prioritize_errors(errors)
+    assert prioritized[0]["issue"] == "Syntax Error"
+    assert prioritized[1]["issue"] == "Runtime Error"
+    assert prioritized[2]["issue"] == "Static Analysis"
+
+
+def test_consolidate_fixes():
+    errors = [
+        {"issue": "Syntax Error", "message": "Missing colon", "line": 10, "fix_suggestion": "Add colon"},
+        {"issue": "Static Analysis", "message": "Unused variable", "line": 15, "fix_suggestion": "Remove variable"},
+        {"issue": "Syntax Error", "message": "Indentation error", "line": 10, "fix_suggestion": "Fix indentation"},
+    ]
+    fixes = consolidate_fixes(errors)
+    assert len(fixes) == 2
+    assert len(fixes[10]) == 2
+    assert len(fixes[15]) == 1
+
+
+def test_cross_validate_analysis():
+    syntax_err = {"message": "Missing colon"}
+    runtime_err = {"message": "Division by zero"}
+    static_issues = [{"message": "Unused variable"}, {"message": "Missing colon"}]
+    llm_analysis = {"message": "Possible bug"}
+    pylint_analysis = {"errors": "Unused variable"}
+    validated = cross_validate_analysis(syntax_err, runtime_err, static_issues, llm_analysis, pylint_analysis)
+    assert len(validated) == 2
+    assert validated[0]["confidence"] == "High"
+    assert validated[1]["confidence"] == "Medium"
+
+
+def test_analyze_changes():
+    old_file_path = "test_files/old_script.py"
+    new_file_path = "test_files/new_script.py"
+    changes = analyze_changes(old_file_path, new_file_path)
+    assert "changed_lines" in changes
+    assert len(changes["changed_lines"]) > 0
+
+
+def test_analyze_file():
+    file_path = "test_files/broken_script.py"
+    result = analyze_file(file_path, should_generate_report=True)
+    assert "errors" in result
+    assert "fixes" in result
+    assert "validated_issues" in result
+    assert "report" in result
