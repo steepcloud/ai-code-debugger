@@ -1,4 +1,4 @@
-x = 1
-y = 0
+def divide_numbers(x, y):
+    return x / y
 
-print(x / y)
+print(divide_numbers(1, 0))
