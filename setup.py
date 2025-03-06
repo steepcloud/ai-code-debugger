@@ -9,11 +9,13 @@ setup(
         "torch",
         "pyyaml",
         "pylint",
-        "black"
+        "black",
+        "flask"
     ],
     entry_points={
         "console_scripts": [
             "ai-debugger=cli:main",
+            "ai-debugger-api=debug_api:main",
         ],
     },
     author="David Carboveanu",

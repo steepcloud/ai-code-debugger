@@ -1,7 +1,9 @@
-transformers
+transformers~=4.49.0
 torch
-pyyaml
+pyyaml~=6.0.1
 pylint
-black
-pytest
-flask
+pytest~=8.1.1
+flask~=3.1.0
+setuptools~=68.2.0
+utils~=1.0.1
+flask-cors~=5.0.1
