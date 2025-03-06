@@ -2,6 +2,7 @@ import logging
 import difflib
 import re
 import os
+import ast
 from pathlib import Path
 from ai_debugger.config import Config
 from ai_debugger.syntax_checker import SyntaxChecker
@@ -19,6 +20,8 @@ class Debugger:
         self.current_file = None
         self.current_line = 0
         self.variables = {}
+        self.call_stack = []
+        self.return_value = None
         self.llm_model = llm_model or "microsoft/CodeGPT-small-py"
         self.max_length = max_length or 150
 
@@ -116,13 +119,131 @@ class Debugger:
 
 
     def step_into(self):
-        #TODO
-        pass
+        if not self.current_file or self.current_line is None:
+            return False
+
+        try:
+            with open(self.current_file, 'r', encoding='utf-8') as file:
+                code = file.read()
+
+            tree = ast.parse(code)
+            function_calls = []
+
+            class FunctionCallVisitor(ast.NodeVisitor):
+                def __init__(self, current_line):
+                    self.current_line = current_line
+                    super().__init__()
+
+                def visit_Call(self, node):
+                    if hasattr(node, 'lineno') and node.lineno == self.current_line + 1:
+                        if isinstance(node.func, ast.Name):
+                            function_calls.append(node.func.id)
+                        elif isinstance(node.func, ast.Attribute):
+                            function_calls.append(node.func.attr)
+                    self.generic_visit(node)
+
+            visitor = FunctionCallVisitor(self.current_line)
+            visitor.visit(tree)
+
+            if not function_calls:
+                logging.debug(f"No function calls found at line {self.current_line + 1}")
+                return False
+
+            function_name = function_calls[0]
+            function_def_lineno = self._find_function_definition(function_name)
+
+            if function_def_lineno is None:
+                logging.debug(f"Could not find definition for function '{function_name}'")
+                return False
+
+            if not hasattr(self, 'call_stack'):
+                self.call_stack = []
+
+            self.call_stack.append({
+                'file': self.current_file,
+                'line': self.current_line,
+                'function': function_name,
+                'locals': self.variables.copy() if hasattr(self, 'variables') else {}
+            })
+
+            self.current_line = function_def_lineno
+            logging.info(f"Stepped into function '{function_name}' at line {function_def_lineno + 1}")
+
+            self.variables = self._extract_function_parameters(function_name, code)
+            return True
+
+        except Exception as e:
+            logging.error(f"Error stepping into function: {str(e)}")
+            return False
 
 
     def step_out(self):
-        #TODO
-        pass
+        if not hasattr(self, 'call_stack') or not self.call_stack:
+            logging.debug("Cannot step out: call stack is empty")
+            return False
+
+        try:
+            call_frame = self.call_stack.pop()
+
+            self.current_file = call_frame['file']
+            self.current_line = call_frame['line'] + 1
+
+            stored_locals = call_frame.get('locals', {})
+
+            if hasattr(self, 'return_value') and self.return_value is not None:
+                stored_locals['_return'] = self.return_value
+                self.return_value = None
+
+            self.variables = stored_locals
+            logging.info(f"Stepped out to line {self.current_line + 1}")
+            return True
+
+        except Exception as e:
+            logging.error(f"Error stepping out: {str(e)}")
+            return False
+
+
+    def _find_function_definition(self, function_name):
+        try:
+            with open(self.current_file, 'r', encoding='utf-8') as file:
+                code = file.read()
+
+            tree = ast.parse(code)
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name == function_name:
+                    return node.lineno - 1
+            return None
+
+        except Exception as e:
+            logging.error(f"Error finding function definition: {str(e)}")
+            return None
+
+
+    def _extract_function_parameters(self, function_name, code):
+        try:
+            tree = ast.parse(code)
+            parameters = {}
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name == function_name:
+                    for arg in node.args.args:
+                        parameters[arg.arg] = None
+
+                    defaults = node.args.defaults
+                    if defaults:
+                        default_offset = len(node.args.args) - len(defaults)
+                        for i, default in enumerate(defaults):
+                            arg_index = default_offset + i
+                            if arg_index < len(node.args.args):
+                                arg_name = node.args.args[arg_index].arg
+                                parameters[arg_name] = '<default value>'
+                    break
+            return parameters
+
+        except Exception as e:
+            logging.error(f"Error extracting function parameters: {str(e)}")
+            return {}
 
 
     def inspect_variable(self, variable_name):
