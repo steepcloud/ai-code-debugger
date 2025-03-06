@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Debugger UI</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+        .panel {
+            background-color: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        #code-display {
+            font-family: 'Consolas', 'Courier New', monospace;
+            white-space: pre;
+            overflow-x: auto;
+            background-color: #f7f7f7;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .line {
+            padding: 2px 5px;
+            display: flex;
+        }
+        .line-number {
+            width: 35px;
+            text-align: right;
+            color: #888;
+            user-select: none;
+            margin-right: 15px;
+        }
+        .current-line {
+            background-color: #ffe3b0;
+        }
+        .breakpoint {
+            background-color: #ffcccb;
+        }
+        button {
+            padding: 8px 12px;
+            margin-right: 5px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #356ac3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        input[type="text"] {
+            padding: 8px;
+            margin-right: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        #variables {
+            font-family: 'Consolas', 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>AI Debugger</h1>
+
+    <div class="panel">
+        <h2>Open a file to debug</h2>
+        <input type="text" id="file-path" placeholder="Enter file path" value="tests/test_files/broken_script.py">
+        <button id="create-session">Start Debugging</button>
+    </div>
+
+    <div class="container">
+        <div class="panel">
+            <h2>Code</h2>
+            <div id="code-display"></div>
+            <div id="error-display" style="color: red; font-weight: bold; margin-top: 10px;"></div>
+
+
+            <div style="margin-top: 20px;">
+                <button id="step-into">Step Into (s)</button>
+                <button id="step-over">Step Over (n)</button>
+                <button id="step-out">Step Out (o)</button>
+                <button id="continue">Continue (c)</button>
+            </div>
+
+            <div style="margin-top: 10px;">
+                <input type="text" id="breakpoint-line" placeholder="Line number">
+                <button id="set-breakpoint">Set Breakpoint</button>
+            </div>
+
+            <div style="margin-top: 10px;">
+                <input type="text" id="variable-name" placeholder="Variable name">
+                <button id="inspect-variable">Inspect</button>
+            </div>
+
+            <div style="margin-top: 10px;">
+                <button id="suggest-fix">Suggest Fix</button>
+                <button id="explain-code">Explain Code</button>
+                <button id="auto-fix">Auto Fix</button>
+            </div>
+        </div>
+
+        <div>
+            <div class="panel">
+                <h2>Variables</h2>
+                <pre id="variables">No variables available</pre>
+            </div>
+
+            <div class="panel">
+                <h2>Call Stack</h2>
+                <div id="call-stack">Not in a function</div>
+            </div>
+
+            <div class="panel">
+                <h2>Analysis</h2>
+                <button id="run-analysis">Run Analysis</button>
+                <div id="analysis-results" style="margin-top: 10px;">Run analysis to see results</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = null;
+        const baseUrl = 'http://localhost:5000/api/debugger';
+
+        document.getElementById('create-session').addEventListener('click', createSession);
+        document.getElementById('step-into').addEventListener('click', () => sendCommand('step_into'));
+        document.getElementById('step-over').addEventListener('click', () => sendCommand('step_over'));
+        document.getElementById('step-out').addEventListener('click', () => sendCommand('step_out'));
+        document.getElementById('continue').addEventListener('click', () => sendCommand('continue'));
+        document.getElementById('set-breakpoint').addEventListener('click', setBreakpoint);
+        document.getElementById('inspect-variable').addEventListener('click', inspectVariable);
+        document.getElementById('run-analysis').addEventListener('click', runAnalysis);
+
+        // Set all debugging buttons to disabled initially
+        setButtonsEnabled(false);
+
+        async function createSession() {
+            const filePath = document.getElementById('file-path').value;
+            if (!filePath) {
+                alert('Please enter a file path');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${baseUrl}/create`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to create session');
+                }
+
+                const data = await response.json();
+                sessionId = data.session_id;
+
+                setButtonsEnabled(true);
+                getStatus();
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function getStatus() {
+            if (!sessionId) return;
+
+            try {
+                const response = await fetch(`${baseUrl}/${sessionId}/status`);
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to get status');
+                }
+
+                const data = await response.json();
+                updateCodeDisplay(data.context);
+                updateVariables(data.variables);
+                updateCallStack(data.call_stack);
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function sendCommand(command) {
+            if (!sessionId) return;
+
+            try {
+                const response = await fetch(`${baseUrl}/${sessionId}/command`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ command: command })
+                });
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    const errorMessage = result.message || 'Unknown error';
+                    document.getElementById('analysis-results').innerHTML =
+                        `<div style="color: red; font-weight: bold;">Error: ${errorMessage}</div>`;
+                }
+
+                getStatus();
+
+                return result;
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+
+        async function setBreakpoint() {
+            const lineNumber = document.getElementById('breakpoint-line').value;
+            if (!lineNumber || isNaN(parseInt(lineNumber))) {
+                alert('Please enter a valid line number');
+                return;
+            }
+
+            sendCommand(`set_breakpoint ${lineNumber}`);
+        }
+
+        async function inspectVariable() {
+            const varName = document.getElementById('variable-name').value;
+            if (!varName) {
+                alert('Please enter a variable name');
+                return;
+            }
+
+            sendCommand(`inspect ${varName}`);
+        }
+
+        async function runAnalysis() {
+            if (!sessionId) return;
+
+            document.getElementById('analysis-results').innerHTML = 'Analyzing...';
+
+            try {
+                const filePath = document.getElementById('file-path').value;
+                const checkResponse = await fetch(`${baseUrl}/check_file`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ file_path: filePath })
+                });
+
+                const checkData = await checkResponse.json();
+
+                const response = await fetch(`${baseUrl}/${sessionId}/analyze`);
+                const data = await response.json();
+
+                const allErrors = [];
+
+                if (checkData.errors && checkData.errors.length > 0) {
+                    allErrors.push(...checkData.errors);
+                }
+
+                if (data.errors && data.errors.length > 0) {
+                    data.errors.forEach(error => {
+                        if (!allErrors.some(e => e.line === error.line && e.message === error.message)) {
+                            allErrors.push(error);
+                        }
+                    });
+                }
+
+                displayAnalysis({ errors: allErrors });
+            } catch (error) {
+                document.getElementById('analysis-results').innerHTML =
+                    `<div style="color: red;">Analysis failed: ${error.message}</div>`;
+            }
+        }
+
+        function updateCodeDisplay(context) {
+            const codeDisplay = document.getElementById('code-display');
+            const errorDisplay = document.getElementById('error-display');
+            codeDisplay.innerHTML = '';
+            errorDisplay.textContent = '';
+
+            const currentLine = context.find(line => line.is_current);
+
+            if (currentLine) {
+                try {
+                    const line = currentLine.content.trim();
+                    if (line && !line.startsWith('#')) {
+                        if (line.includes('def') && !line.includes(':')) {
+                            errorDisplay.textContent = `Possible syntax error at line ${currentLine.line_number}: Missing colon in function definition`;
+                        } else if (line.includes('if') && !line.includes(':')) {
+                            errorDisplay.textContent = `Possible syntax error at line ${currentLine.line_number}: Missing colon in if statement`;
+                        } else if (line.includes('else') && !line.includes(':')) {
+                            errorDisplay.textContent = `Possible syntax error at line ${currentLine.line_number}: Missing colon in else statement`;
+                        }
+                    }
+                } catch (e) {
+                }
+            }
+
+            context.forEach(line => {
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'line';
+                if (line.is_current) lineDiv.classList.add('current-line');
+                if (line.has_breakpoint) lineDiv.classList.add('breakpoint');
+
+                const lineNumber = document.createElement('span');
+                lineNumber.className = 'line-number';
+                lineNumber.textContent = line.line_number;
+
+                const lineContent = document.createElement('span');
+                lineContent.className = 'line-content';
+                lineContent.textContent = line.content;
+
+                lineDiv.appendChild(lineNumber);
+                lineDiv.appendChild(lineContent);
+                codeDisplay.appendChild(lineDiv);
+            });
+        }
+
+        async function suggestFix() {
+            if (!sessionId) return;
+
+            document.getElementById('analysis-results').innerHTML = 'Generating fix suggestions...';
+
+            try {
+                const response = await fetch(`${baseUrl}/${sessionId}/suggest_fix`);
+                const data = await response.json();
+
+                let suggestionsHTML = '<h3>Fix Suggestions</h3>';
+                if (data.suggestions && data.suggestions.length > 0) {
+                    suggestionsHTML += '<ul>';
+                    data.suggestions.forEach(suggestion => {
+                        suggestionsHTML += `<li>${suggestion}</li>`;
+                    });
+                    suggestionsHTML += '</ul>';
+                } else {
+                    suggestionsHTML += '<p>No suggestions available</p>';
+                }
+
+                document.getElementById('analysis-results').innerHTML = suggestionsHTML;
+            } catch (error) {
+                document.getElementById('analysis-results').innerHTML =
+                    `<div style="color: red;">Failed to get suggestions: ${error.message}</div>`;
+            }
+        }
+
+        async function explainCode() {
+            if (!sessionId) return;
+
+            document.getElementById('analysis-results').innerHTML = 'Generating code explanation...';
+
+            try {
+                const currentLineElement = document.querySelector('.current-line');
+                if (!currentLineElement) {
+                    throw new Error('No current line selected');
+                }
+
+                const lineNumber = parseInt(currentLineElement.querySelector('.line-number').textContent);
+
+                let startLine = lineNumber;
+                let endLine = lineNumber;
+
+                const response = await fetch(`${baseUrl}/${sessionId}/explain`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        start_line: startLine,
+                        end_line: endLine
+                    })
+                });
+
+                const data = await response.json();
+
+                document.getElementById('analysis-results').innerHTML =
+                    `<h3>Code Explanation (Lines ${data.start_line}-${data.end_line})</h3>
+                     <div style="white-space: pre-wrap">${data.explanation}</div>`;
+            } catch (error) {
+                document.getElementById('analysis-results').innerHTML =
+                    `<div style="color: red;">Failed to explain code: ${error.message}</div>`;
+            }
+        }
+
+        async function autoFix() {
+            if (!sessionId) return;
+
+            document.getElementById('analysis-results').innerHTML = 'Applying automatic fixes...';
+
+            try {
+                const response = await fetch(`${baseUrl}/${sessionId}/auto_fix`);
+                const data = await response.json();
+
+                if (data.success) {
+                    let changesHTML = '<h3>Applied Fixes</h3>';
+
+                    if (data.changes && data.changes.length > 0) {
+                        changesHTML += '<ul>';
+                        data.changes.forEach(change => {
+                            if (change.type === 'full_replacement') {
+                                changesHTML += `<li>${change.message}</li>`;
+                            } else {
+                                changesHTML += `<li>Line ${change.line}: ${change.message}<br>
+                                    <span style="color: red; text-decoration: line-through">${change.original}</span><br>
+                                    <span style="color: green">${change.fixed}</span>
+                                </li>`;
+                            }
+                        });
+                        changesHTML += '</ul>';
+
+                        changesHTML += '<p>Refreshing session to display fixed code...</p>';
+                        document.getElementById('analysis-results').innerHTML = changesHTML;
+
+                        setTimeout(() => {
+                            getStatus();
+                        }, 1000);
+                    } else {
+                        changesHTML += '<p>No changes were needed</p>';
+                        document.getElementById('analysis-results').innerHTML = changesHTML;
+                    }
+                } else {
+                    document.getElementById('analysis-results').innerHTML =
+                        `<div style="color: orange;">No fixes applied</div>`;
+                }
+            } catch (error) {
+                document.getElementById('analysis-results').innerHTML =
+                    `<div style="color: red;">Auto-fix failed: ${error.message}</div>`;
+            }
+        }
+
+        function updateVariables(variables) {
+            const variablesElem = document.getElementById('variables');
+            if (Object.keys(variables).length === 0) {
+                variablesElem.textContent = 'No variables available';
+            } else {
+                variablesElem.textContent = JSON.stringify(variables, null, 2);
+            }
+        }
+
+        function updateCallStack(callStack) {
+            const callStackElem = document.getElementById('call-stack');
+            if (callStack.length === 0) {
+                callStackElem.textContent = 'Not in a function';
+            } else {
+                callStackElem.innerHTML = '';
+                const list = document.createElement('ul');
+                callStack.forEach(frame => {
+                    const item = document.createElement('li');
+                    item.textContent = `${frame.function} (${frame.file}:${frame.line})`;
+                    list.appendChild(item);
+                });
+                callStackElem.appendChild(list);
+            }
+        }
+
+        function displayAnalysis(data) {
+            const resultsElem = document.getElementById('analysis-results');
+            resultsElem.innerHTML = '';
+
+            if (data.errors && data.errors.length > 0) {
+                const errorsTitle = document.createElement('h3');
+                errorsTitle.textContent = 'Errors';
+                resultsElem.appendChild(errorsTitle);
+
+                const errorsList = document.createElement('ul');
+                data.errors.forEach(error => {
+                    const item = document.createElement('li');
+                    item.textContent = `${error.message} (Line ${error.line})`;
+                    errorsList.appendChild(item);
+                });
+                resultsElem.appendChild(errorsList);
+            } else {
+                resultsElem.textContent = 'No errors found';
+            }
+        }
+
+        function setButtonsEnabled(enabled) {
+            document.getElementById('step-into').disabled = !enabled;
+            document.getElementById('step-over').disabled = !enabled;
+            document.getElementById('step-out').disabled = !enabled;
+            document.getElementById('continue').disabled = !enabled;
+            document.getElementById('set-breakpoint').disabled = !enabled;
+            document.getElementById('inspect-variable').disabled = !enabled;
+            document.getElementById('run-analysis').disabled = !enabled;
+            document.getElementById('suggest-fix').addEventListener('click', suggestFix);
+            document.getElementById('explain-code').addEventListener('click', explainCode);
+            document.getElementById('auto-fix').addEventListener('click', autoFix);
+        }
+    </script>
+</body>
+</html>

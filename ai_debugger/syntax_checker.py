@@ -1,5 +1,6 @@
 import ast
 import logging
+import re
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -19,6 +20,7 @@ class SyntaxChecker:
                 "column": e.offset,
                 "fix_suggestion": SyntaxChecker.get_fix_suggestion(e)
             }
+
 
     @staticmethod
     def analyze_file(fpath: str) -> dict:
@@ -43,6 +45,42 @@ class SyntaxChecker:
                 "message": str(e)
             }
         return {}
+
+
+    @staticmethod
+    def analyze_line(line, line_number):
+        issues = []
+
+        if re.search(r'\b(if|elif|else|def|class|for|while|try|except|finally)\b.*\s*$', line) and not line.endswith(
+                ':'):
+            return {
+                "issue": "Syntax Error",
+                "line": line_number + 1,
+                "message": "Missing colon at the end of statement",
+                "fix_suggestion": f"{line}:"
+            }
+
+        quote_chars = ["'", '"', '"""', "'''"]
+        for quote in quote_chars:
+            if line.count(quote) % 2 == 1:
+                return {
+                    "issue": "Syntax Error",
+                    "line": line_number + 1,
+                    "message": f"Mismatched {quote} quotes",
+                    "fix_suggestion": f"{line}{quote}"
+                }
+
+        if ('if ' in line or 'while ' in line) and '=' in line and '==' not in line and '!=' not in line:
+            fixed = line.replace('=', '==', 1)
+            return {
+                "issue": "Syntax Error",
+                "line": line_number + 1,
+                "message": "Using assignment (=) instead of comparison (==) in condition",
+                "fix_suggestion": fixed
+            }
+
+        return None
+
 
     @staticmethod
     def get_fix_suggestion(error) -> str:

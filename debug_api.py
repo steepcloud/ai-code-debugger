@@ -219,6 +219,121 @@ def health_check():
     return jsonify({"status": "ok", "active_sessions": len(sessions)})
 
 
+@app.route('/api/debugger/check_file', methods=['POST'])
+def check_file():
+    try:
+        data = request.get_json()
+        file_path = data.get('file_path')
+
+        if not file_path or not os.path.exists(file_path):
+            return jsonify({'error': f"File not found: {file_path}"}), 404
+
+        errors = []
+
+        try:
+            with open(file_path, 'r') as f:
+                source = f.read()
+            compile(source, file_path, 'exec')
+        except SyntaxError as e:
+            errors.append({
+                'message': f"Syntax error: {str(e)}",
+                'line': e.lineno
+            })
+
+        try:
+            debugger = Debugger()
+            analysis = debugger.analyze_file(file_path)
+
+            if 'errors' in analysis and analysis['errors']:
+                for error in analysis['errors']:
+                    if not any(e['line'] == error['line'] and e['message'] == error['message'] for e in errors):
+                        errors.append(error)
+        except Exception as e:
+            errors.append({
+                'message': f"AI analysis error: {str(e)}",
+                'line': 0
+            })
+
+        return jsonify({'errors': errors})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/debugger/<session_id>/suggest_fix', methods=['GET'])
+def suggest_fix(session_id):
+    if session_id not in sessions:
+        return jsonify({"error": "Session not found"}), 404
+
+    session = sessions[session_id]
+    debugger = session["debugger"]
+    file_path = session["file_path"]
+    current_line = debugger.current_line
+
+    try:
+        suggestions = debugger.suggest_fix_for_line(file_path, current_line)
+        return jsonify({
+            "line": current_line + 1,
+            "suggestions": suggestions
+        })
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate suggestions: {str(e)}"}), 500
+
+
+@app.route('/api/debugger/<session_id>/explain', methods=['POST'])
+def explain_code(session_id):
+    if session_id not in sessions:
+        return jsonify({"error": "Session not found"}), 404
+
+    data = request.json
+    if not data or ('start_line' not in data and 'end_line' not in data):
+        return jsonify({"error": "Missing line range parameters"}), 400
+
+    session = sessions[session_id]
+    code_lines = session["code_lines"]
+
+    start_line = data.get('start_line', 1) - 1
+    end_line = data.get('end_line', start_line + 1) - 1
+
+    if start_line < 0 or end_line >= len(code_lines) or start_line > end_line:
+        return jsonify({"error": "Invalid line range"}), 400
+
+    code_segment = ''.join(code_lines[start_line:end_line + 1])
+
+    debugger = session["debugger"]
+    try:
+        explanation = debugger.explain_code(code_segment)
+        return jsonify({
+            "start_line": start_line + 1,
+            "end_line": end_line + 1,
+            "explanation": explanation
+        })
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate explanation: {str(e)}"}), 500
+
+
+@app.route('/api/debugger/<session_id>/auto_fix', methods=['GET'])
+def auto_fix(session_id):
+    if session_id not in sessions:
+        return jsonify({"error": "Session not found"}), 404
+
+    session = sessions[session_id]
+    debugger = session["debugger"]
+    file_path = session["file_path"]
+
+    try:
+        fixed_code, changes = debugger.auto_fix_file(file_path)
+
+        if fixed_code:
+            fixed_lines = fixed_code.split('\n')
+            session["code_lines"] = [line + '\n' for line in fixed_lines]
+
+        return jsonify({
+            "success": bool(fixed_code),
+            "changes": changes
+        })
+    except Exception as e:
+        return jsonify({"error": f"Auto-fix failed: {str(e)}"}), 500
+
+
 if __name__ == '__main__':
     import argparse
 

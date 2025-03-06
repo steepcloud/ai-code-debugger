@@ -300,6 +300,206 @@ class Debugger:
         return changes
 
 
+    def suggest_fix_for_line(self, file_path, line_number):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                code_lines = file.readlines()
+
+            if line_number < 0 or line_number >= len(code_lines):
+                return ["Invalid line number"]
+
+            start = max(0, line_number - 2)
+            end = min(len(code_lines), line_number + 3)
+            context = ''.join(code_lines[start:end])
+
+            target_line = code_lines[line_number].strip()
+
+            suggestions = []
+
+            syntax_check = SyntaxChecker.analyze_line(target_line, line_number)
+            if syntax_check:
+                suggestions.append(syntax_check.get("fix_suggestion", "Add missing syntax element"))
+
+            try:
+                prompt = (
+                    f"The following Python code has an issue on line {line_number + 1}:\n\n"
+                    f"{context}\n\n"
+                    f"Line {line_number + 1} is: {target_line}\n\n"
+                    "Provide exactly three suggestions to fix this code. Each suggestion should be a complete, corrected version of the line."
+                )
+
+                llm_suggestions = analyze_code_with_llm(
+                    prompt,
+                    model_name=self.llm_model,
+                    max_length=self.max_length
+                )
+
+                if isinstance(llm_suggestions, str):
+                    import re
+                    fixes = re.findall(r'(\d+\.\s*`.*?`)', llm_suggestions, re.DOTALL)
+                    if fixes:
+                        for fix in fixes:
+                            code = re.search(r'`(.*?)`', fix)
+                            if code:
+                                suggestions.append(code.group(1))
+                    else:
+                        suggestions.append(llm_suggestions)
+            except Exception as e:
+                logging.warning(f"LLM suggestion failed: {str(e)}")
+
+            if not suggestions:
+                if ":" not in target_line and ("if " in target_line or "def " in target_line or "else" in target_line):
+                    suggestions.append(f"{target_line}:")
+                elif "==" in target_line and "if" in target_line:
+                    suggestions.append(target_line.replace("=", "=="))
+                elif "=" in target_line and "if" in target_line:
+                    suggestions.append(target_line.replace("=", "=="))
+                else:
+                    suggestions.append("Check indentation and syntax")
+
+            return suggestions
+
+        except Exception as e:
+            logging.error(f"Error suggesting fix for line: {str(e)}")
+            return [f"Error analyzing line: {str(e)}"]
+
+
+    def explain_code(self, code_segment):
+        try:
+            if not code_segment or code_segment.strip() == "":
+                return "No code provided to explain."
+
+            prompt = (
+                f"Explain the following Python code in simple terms:\n\n"
+                f"```python\n{code_segment}\n```\n\n"
+                "Provide a concise explanation that covers:\n"
+                "1. What the code does\n"
+                "2. How it works\n"
+                "3. Any potential issues or improvements\n"
+            )
+
+            explanation = analyze_code_with_llm(
+                prompt,
+                model_name=self.llm_model,
+                max_length=max(500, self.max_length * 2)
+            )
+
+            if not explanation or explanation.strip() == "":
+                return "Could not generate an explanation for the provided code."
+
+            return explanation
+
+        except Exception as e:
+            logging.error(f"Error explaining code: {str(e)}")
+            return f"Error generating explanation: {str(e)}"
+
+
+    def auto_fix_file(self, file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                original_code = f.read()
+            analysis = self.analyze_file(file_path)
+
+            if not analysis or not analysis.get('errors') or len(analysis.get('errors', [])) == 0:
+                return original_code, []
+
+            errors_by_line = {}
+            for error in analysis.get('errors', []):
+                if 'line' in error:
+                    line = error.get('line', 0)
+                    if line not in errors_by_line:
+                        errors_by_line[line] = []
+                    errors_by_line[line].append(error)
+
+            if not errors_by_line:
+                prompt = (
+                    f"Fix all syntax and logical errors in the following Python code:\n\n"
+                    f"```python\n{original_code}\n```\n\n"
+                    "Return only the corrected code without explanations."
+                )
+
+                fixed_code = analyze_code_with_llm(
+                    prompt,
+                    model_name=self.llm_model,
+                    max_length=max(len(original_code) * 2, self.max_length)
+                )
+
+                code_match = re.search(r'```(?:python)?\n(.*?)\n```', fixed_code, re.DOTALL)
+                if code_match:
+                    fixed_code = code_match.group(1)
+
+                changes = [{
+                    "type": "full_replacement",
+                    "message": "Applied AI-generated fixes to the entire file"
+                }]
+
+                return fixed_code, changes
+
+            lines = original_code.split('\n')
+            changes = []
+
+            for line_num in sorted(errors_by_line.keys()):
+                idx = line_num - 1
+                if idx < 0 or idx >= len(lines):
+                    continue
+
+                errors = errors_by_line[line_num]
+                original_line = lines[idx]
+
+                fix_suggestion = None
+                for error in errors:
+                    if 'fix_suggestion' in error:
+                        fix_suggestion = error['fix_suggestion']
+                        break
+
+                if fix_suggestion:
+                    lines[idx] = fix_suggestion
+                    changes.append({
+                        "line": line_num,
+                        "original": original_line,
+                        "fixed": fix_suggestion,
+                        "message": errors[0].get('message', 'Fixed syntax error')
+                    })
+                else:
+                    context_start = max(0, idx - 2)
+                    context_end = min(len(lines), idx + 3)
+                    context_code = '\n'.join(lines[context_start:context_end])
+
+                    prompt = (
+                        f"Fix the error on line {idx + 1} in this Python code:\n\n"
+                        f"```python\n{context_code}\n```\n\n"
+                        f"The specific line is: {original_line}\n\n"
+                        f"Error: {errors[0].get('message', 'Unknown error')}\n\n"
+                        "Return only the corrected line of code."
+                    )
+
+                    llm_fix = analyze_code_with_llm(
+                        prompt,
+                        model_name=self.llm_model,
+                        max_length=self.max_length
+                    )
+
+                    if llm_fix:
+                        llm_fix = llm_fix.replace('```python', '').replace('```', '')
+                        fixed_line = next((line.strip() for line in llm_fix.split('\n') if line.strip()), '')
+
+                        if fixed_line and fixed_line != original_line:
+                            lines[idx] = fixed_line
+                            changes.append({
+                                "line": line_num,
+                                "original": original_line,
+                                "fixed": fixed_line,
+                                "message": errors[0].get('message', 'Fixed with AI assistance')
+                            })
+
+            fixed_code = '\n'.join(lines)
+            return fixed_code, changes
+
+        except Exception as e:
+            logging.error(f"Auto-fix failed: {str(e)}")
+            raise
+
+
     def _prioritize_errors(self, errors: list) -> list:
         priority_order = {"Syntax Error": 1, "Runtime Error": 2, "Pylint Analysis": 3,
                           "Static Analysis": 4, "LLM Analysis": 5}
