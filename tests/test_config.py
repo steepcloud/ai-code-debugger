@@ -37,7 +37,6 @@ def test_set_and_save():
         config.set("models.default", "new-model")
         config.set("new_option", "value")
 
-        # Save and reload
         config.save(config_path=temp_path)
         new_config = Config(config_path=temp_path)
 

@@ -1,3 +1,4 @@
+import os
 from ai_debugger.syntax_checker import SyntaxChecker
 from ai_debugger.debugger import Debugger
 from ai_debugger.static_analyzer import StaticAnalyzer
@@ -7,7 +8,7 @@ from ai_debugger.runtime_err_checker import detect_runtime_error
 debugger = Debugger()
 
 def test_syntax_checking():
-    file_path = "test_files/broken_script.py"
+    file_path = os.path.join(os.path.dirname(__file__), "test_files", "broken_script.py")
 
     try:
         with open(file_path, 'r') as file:
@@ -24,7 +25,7 @@ def test_syntax_checking():
 
 
 def test_runtime_error_detection():
-    file_path = "test_files/runtime_error_script.py"
+    file_path = os.path.join(os.path.dirname(__file__), "test_files", "runtime_error_script.py")
 
     try:
         with open(file_path, 'r') as file:
@@ -41,8 +42,8 @@ def test_runtime_error_detection():
 
 
 def test_no_errors():
-    file_path = "test_files/valid_script.py"
-    
+    file_path = os.path.join(os.path.dirname(__file__), "test_files", "valid_script.py")
+
     try:
         with open(file_path, 'r') as file:
             print(f"File Content:\n{file.read()}")
@@ -57,7 +58,7 @@ def test_no_errors():
 
 
 def test_no_runtime_errors():
-    file_path = "test_files/valid_script.py"
+    file_path = os.path.join(os.path.dirname(__file__), "test_files", "valid_script.py")
 
     try:
         with open(file_path, 'r') as file:
@@ -121,15 +122,15 @@ def test_cross_validate_analysis():
 
 
 def test_analyze_changes():
-    old_file_path = "test_files/old_script.py"
-    new_file_path = "test_files/new_script.py"
+    old_file_path = os.path.join(os.path.dirname(__file__), "test_files", "old_script.py")
+    new_file_path = os.path.join(os.path.dirname(__file__), "test_files", "new_script.py")
     changes = debugger.analyze_changes(old_file_path, new_file_path)
     assert "changed_lines" in changes
     assert len(changes["changed_lines"]) > 0
 
 
 def test_analyze_file():
-    file_path = "test_files/broken_script.py"
+    file_path = os.path.join(os.path.dirname(__file__), "test_files", "broken_script.py")
     result = debugger.analyze_file(file_path, should_generate_report=True)
     assert "errors" in result
     assert "fixes" in result
