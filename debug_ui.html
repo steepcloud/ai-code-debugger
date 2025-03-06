@@ -392,6 +392,11 @@
                     })
                 });
 
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to explain code');
+                }
+
                 const data = await response.json();
 
                 document.getElementById('analysis-results').innerHTML =
@@ -410,6 +415,11 @@
 
             try {
                 const response = await fetch(`${baseUrl}/${sessionId}/auto_fix`);
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Auto-fix failed');
+                }
+
                 const data = await response.json();
 
                 if (data.success) {
